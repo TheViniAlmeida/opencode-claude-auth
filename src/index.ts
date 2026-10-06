@@ -1,4 +1,3 @@
-import type { Plugin } from "@opencode-ai/plugin"
 import crypto from "node:crypto"
 import { config } from "./model-config.ts"
 import { readAllClaudeAccounts, type ClaudeAccount } from "./keychain.ts"
@@ -171,7 +170,12 @@ export function buildRequestHeaders(
 const SYNC_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const PROACTIVE_REFRESH_THRESHOLD_MS = 60 * 60 * 1000 // 1 hour before expiry
 
-const plugin: Plugin = async () => {
+export interface TransportOptions {
+  legacyAuthSync?: boolean
+  proactiveRefresh?: boolean
+}
+
+const plugin = async (options: TransportOptions = {}) => {
   initLogger()
 
   let accounts: ClaudeAccount[] = []
@@ -180,10 +184,7 @@ const plugin: Plugin = async () => {
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err)
     log("plugin_init_error", { error })
-    console.warn(
-      "opencode-claude-auth: Failed to read Claude Code credentials:",
-      error,
-    )
+    console.warn("opencode-claude-auth: Failed to read Claude Code credentials")
     return {}
   }
 
@@ -207,7 +208,7 @@ const plugin: Plugin = async () => {
 
     const initialCreds = await getCachedCredentials()
     if (initialCreds) {
-      syncAuthJson(initialCreds)
+      if (options.legacyAuthSync !== false) syncAuthJson(initialCreds)
     } else {
       console.warn(
         "opencode-claude-auth: Claude credentials are expired and could not be refreshed. Run `claude` to re-authenticate.",
@@ -224,41 +225,46 @@ const plugin: Plugin = async () => {
     // This prevents the "run `claude` to re-authenticate" message from
     // appearing mid-session when the token silently expires.
     let proactiveRefreshWarned = false
-    const syncTimer = setInterval(async () => {
-      try {
-        const account = getActiveAccount()
-        log("proactive_refresh_check", {
-          source: account?.source ?? null,
-          expiresAt: account?.credentials?.expiresAt ?? null,
-          thresholdMs: PROACTIVE_REFRESH_THRESHOLD_MS,
-        })
+    const syncTimer =
+      options.proactiveRefresh === false
+        ? undefined
+        : setInterval(async () => {
+            try {
+              const account = getActiveAccount()
+              log("proactive_refresh_check", {
+                source: account?.source ?? null,
+                expiresAt: account?.credentials?.expiresAt ?? null,
+                thresholdMs: PROACTIVE_REFRESH_THRESHOLD_MS,
+              })
 
-        const creds = await refreshIfNeeded(
-          undefined,
-          PROACTIVE_REFRESH_THRESHOLD_MS,
-        )
-        if (creds) {
-          syncAuthJson(creds)
-          if (proactiveRefreshWarned) {
-            log("proactive_refresh_recovered", { source: account?.source })
-          }
-          proactiveRefreshWarned = false
-        } else {
-          log("proactive_refresh_failed", { source: account?.source })
-          // Only warn once per outage — otherwise this fires every
-          // SYNC_INTERVAL (5 min) for as long as refresh keeps failing.
-          if (!proactiveRefreshWarned) {
-            proactiveRefreshWarned = true
-            console.warn(
-              "opencode-claude-auth: Proactive token refresh failed. Run `claude` to re-authenticate.",
-            )
-          }
-        }
-      } catch {
-        // Non-fatal
-      }
-    }, SYNC_INTERVAL)
-    syncTimer.unref()
+              const creds = await refreshIfNeeded(
+                undefined,
+                PROACTIVE_REFRESH_THRESHOLD_MS,
+              )
+              if (creds) {
+                if (options.legacyAuthSync !== false) syncAuthJson(creds)
+                if (proactiveRefreshWarned) {
+                  log("proactive_refresh_recovered", {
+                    source: account?.source,
+                  })
+                }
+                proactiveRefreshWarned = false
+              } else {
+                log("proactive_refresh_failed", { source: account?.source })
+                // Only warn once per outage — otherwise this fires every
+                // SYNC_INTERVAL (5 min) for as long as refresh keeps failing.
+                if (!proactiveRefreshWarned) {
+                  proactiveRefreshWarned = true
+                  console.warn(
+                    "opencode-claude-auth: Proactive token refresh failed. Run `claude` to re-authenticate.",
+                  )
+                }
+              }
+            } catch {
+              // Non-fatal
+            }
+          }, SYNC_INTERVAL)
+    syncTimer?.unref()
   } else {
     log("plugin_init_no_accounts", { reason: "no credentials found" })
     console.warn(
@@ -267,7 +273,10 @@ const plugin: Plugin = async () => {
   }
 
   return {
-    "experimental.chat.system.transform": async (input, output) => {
+    "experimental.chat.system.transform": async (
+      input: { model?: { providerID?: string } },
+      output: { system: string[] },
+    ) => {
       if (input.model?.providerID !== "anthropic") {
         return
       }
@@ -281,7 +290,10 @@ const plugin: Plugin = async () => {
     },
     auth: {
       provider: "anthropic",
-      async loader(getAuth, provider) {
+      async loader(
+        getAuth: () => Promise<{ type: string }>,
+        provider: { models: Record<string, { cost?: unknown }> },
+      ) {
         const auth = await getAuth()
         log("auth_loader_called", { authType: auth.type })
         if (auth.type !== "oauth") {
@@ -669,8 +681,10 @@ const plugin: Plugin = async () => {
             ]
           },
 
-          async authorize(inputs) {
+          async authorize(inputs?: { account?: string }) {
             const latestAccounts = refreshAccountsList()
+            if (!latestAccounts.length && !accounts.length)
+              throw new Error("No Claude Code credentials available")
 
             const source =
               inputs?.account ?? latestAccounts[0]?.source ?? accounts[0].source
@@ -683,7 +697,7 @@ const plugin: Plugin = async () => {
             setActiveAccountSource(chosen.source)
             const creds = (await getCachedCredentials()) ?? chosen.credentials
 
-            syncAuthJson(creds)
+            if (options.legacyAuthSync !== false) syncAuthJson(creds)
             saveAccountSource(chosen.source)
 
             const sourceDescription =
@@ -712,5 +726,5 @@ const plugin: Plugin = async () => {
   }
 }
 
-export const ClaudeAuthPlugin = plugin
+export const createClaudeTransport = plugin
 export default plugin

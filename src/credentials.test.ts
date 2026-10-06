@@ -1798,10 +1798,7 @@ describe("refreshViaOAuth", () => {
       assert.ok(entry, "expected a refresh_failed log line")
       assert.equal(entry.error, "HTTP 400")
       assert.equal(entry.oauthError, "invalid_grant")
-      assert.equal(
-        entry.oauthErrorDescription,
-        "Refresh token not found or invalid",
-      )
+      assert.equal(entry.oauthErrorDescription, "REDACTED")
     } finally {
       closeLogger()
       globalThis.fetch = originalFetch
