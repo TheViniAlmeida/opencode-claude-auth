@@ -1,6 +1,14 @@
 import assert from "node:assert/strict"
 import { describe, it, beforeEach, afterEach } from "node:test"
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs"
+import {
+  mkdtempSync,
+  readFileSync,
+  existsSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  statSync,
+} from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { PassThrough } from "node:stream"
@@ -67,7 +75,7 @@ describe("logger", () => {
       assert.equal(JSON.parse(lines[1]).event, "event_two")
     })
 
-    it("truncates the file on initLogger()", () => {
+    it("preserves previous diagnostic entries on initLogger()", () => {
       const logPath = join(tmpDir, "test.log")
       process.env.CLAUDE_AUTH_DEBUG = logPath
 
@@ -81,8 +89,34 @@ describe("logger", () => {
       log("new_event", {})
 
       const lines = readFileSync(logPath, "utf-8").trim().split("\n")
-      assert.equal(lines.length, 1)
-      assert.equal(JSON.parse(lines[0]).event, "new_event")
+      assert.equal(lines.length, 2)
+      assert.equal(JSON.parse(lines[0]).event, "old_event")
+      assert.equal(JSON.parse(lines[1]).event, "new_event")
+    })
+
+    it("refuses a symlink without truncating its target", () => {
+      if (process.platform === "win32") return
+      const target = join(tmpDir, "private-fixture.txt")
+      const link = join(tmpDir, "symlink.log")
+      writeFileSync(target, "fixture stays intact")
+      symlinkSync(target, link)
+      process.env.CLAUDE_AUTH_DEBUG = link
+      assert.throws(() => initLogger())
+      assert.equal(readFileSync(target, "utf8"), "fixture stays intact")
+    })
+
+    it("keeps the opened file after its path is replaced", () => {
+      if (process.platform === "win32") return
+      const logPath = join(tmpDir, "opened.log")
+      const target = join(tmpDir, "private-fixture.txt")
+      writeFileSync(target, "fixture stays intact")
+      process.env.CLAUDE_AUTH_DEBUG = logPath
+      initLogger()
+      assert.equal(statSync(logPath).mode & 0o777, 0o600)
+      rmSync(logPath)
+      symlinkSync(target, logPath)
+      log("still-open-descriptor")
+      assert.equal(readFileSync(target, "utf8"), "fixture stays intact")
     })
 
     it("creates parent directories if they don't exist", () => {
@@ -100,11 +134,14 @@ describe("logger", () => {
 
     it("treats CLAUDE_AUTH_DEBUG=1 as default path", () => {
       process.env.CLAUDE_AUTH_DEBUG = "1"
-      // Just verify initLogger doesn't throw — we can't easily assert
-      // the default path without polluting the real filesystem
-      initLogger()
+      const defaultPath = join(tmpDir, "default.log")
+      initLogger({ defaultPath })
       log("test_event", {})
       closeLogger()
+      assert.equal(
+        JSON.parse(readFileSync(defaultPath, "utf8").trim()).event,
+        "test_event",
+      )
     })
   })
 
@@ -180,7 +217,7 @@ describe("redact", () => {
     const result = redact({
       someToken: "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature",
     })
-    assert.equal(result.someToken, "eyJhbGci...REDACTED")
+    assert.equal(result.someToken, "REDACTED")
   })
 
   it("preserves non-sensitive fields", () => {
@@ -216,5 +253,28 @@ describe("redact", () => {
     assert.equal(result.count, 42)
     assert.equal(result.success, true)
     assert.deepEqual(result.items, ["a", "b"])
+  })
+})
+
+describe("nested diagnostic data", () => {
+  it("redacts request bodies and nested headers without retaining token fragments", () => {
+    const data = redact({
+      headers: {
+        Authorization: "Bearer fake-secret",
+        "set-cookie": "fake-cookie",
+      },
+      body: { messages: "private fixture" },
+      nested: [{ apiKey: "fake-key" }],
+      status: 429,
+    })
+    const text = JSON.stringify(data)
+    for (const value of [
+      "fake-secret",
+      "fake-cookie",
+      "private fixture",
+      "fake-key",
+    ])
+      assert.ok(!text.includes(value))
+    assert.equal(data.status, 429)
   })
 })

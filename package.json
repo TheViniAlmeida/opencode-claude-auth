@@ -9,12 +9,17 @@
     "opencode",
     "plugin"
   ],
+  "homepage": "https://github.com/TheViniAlmeida/opencode-claude-auth#readme",
+  "bugs": {
+    "url": "https://github.com/TheViniAlmeida/opencode-claude-auth/issues"
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/griffinmartin/opencode-claude-auth.git"
+    "url": "git+https://github.com/TheViniAlmeida/opencode-claude-auth.git"
   },
   "files": [
+    "server.js",
     "opencode-claude-auth.js",
     "dist",
     "installation.md"
@@ -22,35 +27,35 @@
   "type": "module",
   "main": "opencode-claude-auth.js",
   "module": "opencode-claude-auth.js",
-  "types": "dist/index.d.ts",
+  "types": "dist/server.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/server.d.ts",
       "import": "./opencode-claude-auth.js"
     },
     "./server": {
-      "types": "./dist/index.d.ts",
+      "types": "./dist/server.d.ts",
       "import": "./opencode-claude-auth.js"
     },
     "./claude-auth-plugin": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
     },
     "./claude-auth-plugin.js": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
     },
     "./opencode-claude-auth": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
     },
     "./opencode-claude-auth.js": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
     }
   },
   "scripts": {
-    "build": "rm -rf dist && tsc && cp src/anthropic-prompt.txt dist/",
+    "build": "tsc && cp src/anthropic-prompt.txt dist/",
     "test": "node --test --experimental-strip-types src/**/*.test.ts scripts/**/*.test.ts",
     "test:models": "pnpm run build && node scripts/test-models.ts",
     "test:headless": "pnpm run build && node --experimental-strip-types scripts/test-headless.ts",
@@ -61,17 +66,18 @@
     "lint": "oxlint && oxfmt --check .",
     "lint:fix": "oxlint --fix . && oxfmt --write .",
     "format": "oxfmt --write .",
-    "prepublishOnly": "pnpm run build && pnpm test"
+    "prepublishOnly": "pnpm run build && pnpm test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "3.0.127",
+    "@opencode/plugin": "2.0.22"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "latest",
     "@types/node": "^25.5.0",
     "oxfmt": "0.41.0",
     "oxlint": "1.56.0",
     "typescript": "^5.0.0"
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
   },
   "packageManager": "pnpm@10.32.1"
 }
